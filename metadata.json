@@ -1,0 +1,6 @@
+{
+  "name": "Apartment Common Management Fund",
+  "description": "Comprehensive 10-flat fund tracking, annual dues ledger, expense share allocation, receipt portal, and automated owner email notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
