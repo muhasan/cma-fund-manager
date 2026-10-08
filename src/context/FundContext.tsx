@@ -7,10 +7,8 @@ import {
   FundSettings,
   FlatBalanceSummary,
   FiscalYearArchive,
-  PaymentMethod,
-  ExpenseCategory,
-  BillingFrequency,
-} from '../types';
+  UserAccount,
+} from '../types/index.ts';
 import {
   INITIAL_SETTINGS,
   INITIAL_FLATS,
@@ -27,8 +25,18 @@ interface FundContextType {
   deposits: Deposit[];
   expenses: Expense[];
   receipts: Receipt[];
+  historicalArchives: Record<string, FiscalYearArchive>;
   role: 'admin' | 'owner';
-  setRole: (role: 'admin' | 'owner') => void;
+  currentUser: UserAccount | null;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  updateMyFlatInfo: (flatId: string, data: Partial<FlatUnit>) => Promise<{ success: boolean; error?: string }>;
+  usersList: UserAccount[];
+  fetchUsers: () => Promise<void>;
+  updateUserAccount: (id: string, data: any) => Promise<void>;
+  createUserAccount: (data: any) => Promise<void>;
+  deleteUserAccount: (id: string) => Promise<void>;
   selectedFlatId: string;
   setSelectedFlatId: (id: string) => void;
   flatSummaries: FlatBalanceSummary[];
@@ -42,39 +50,40 @@ interface FundContextType {
     netCashFlow: number;
     totalShares: number;
   };
-  // Multi-Year & Historical Archives
-  historicalArchives: Record<string, FiscalYearArchive>;
+  isLoading: boolean;
   availableYears: string[];
   activeFiscalYear: string;
   setActiveFiscalYear: (year: string) => void;
+  reloadFundData: () => Promise<void>;
+
+  // Data modification (Admin only)
+  addDeposit: (deposit: Omit<Deposit, 'id' | 'createdAt'>) => Promise<void>;
+  updateDeposit: (deposit: Deposit) => Promise<void>;
+  deleteDeposit: (id: string) => Promise<void>;
+  addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>, receiptData?: { fileName: string; fileUrl: string }) => Promise<void>;
+  updateExpense: (expense: Expense) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+  addReceipt: (receipt: Omit<Receipt, 'id' | 'uploadedAt'>) => void;
+  deleteReceipt: (id: string) => void;
+  updateReceipt: (receipt: Receipt) => void;
+  updateSettings: (newSettings: Partial<FundSettings>) => Promise<void>;
+  updateFlat: (flat: FlatUnit) => Promise<void>;
+  updateHistoricalArchive: (year: string, data: { openingBalance?: number; notes?: string }) => Promise<void>;
   importPreviousYearData: (
     fiscalYear: string,
     openingBalance: number,
     depositsList: Deposit[],
     expensesList: Expense[],
     notes?: string
-  ) => void;
+  ) => Promise<void>;
   parseAndImportCsv: (
     csvContent: string,
     targetYear: string,
     openingBal: number,
     notes?: string
-  ) => { success: boolean; message: string; depositsCount: number; expensesCount: number };
-  deleteHistoricalYear: (year: string) => void;
-
-  // Transaction Operations
-  addDeposit: (deposit: Omit<Deposit, 'id' | 'createdAt'>) => void;
-  updateDeposit: (deposit: Deposit) => void;
-  deleteDeposit: (id: string) => void;
-  addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>, receiptData?: { fileName: string; fileUrl: string }) => void;
-  updateExpense: (expense: Expense) => void;
-  deleteExpense: (id: string) => void;
-  addReceipt: (receipt: Omit<Receipt, 'id' | 'uploadedAt'>) => void;
-  deleteReceipt: (id: string) => void;
-  updateReceipt: (receipt: Receipt) => void;
-  updateSettings: (newSettings: Partial<FundSettings>) => void;
-  updateFlat: (flat: FlatUnit) => void;
-  resetToDefaultData: () => void;
+  ) => Promise<{ success: boolean; message: string; depositsCount: number; expensesCount: number }>;
+  deleteHistoricalYear: (year: string) => Promise<void>;
+  resetToDefaultData: () => Promise<void>;
   exportCsvData: () => void;
   exportJsonBackup: () => void;
   importJsonBackup: (jsonData: string) => boolean;
@@ -82,113 +91,218 @@ interface FundContextType {
 
 const FundContext = createContext<FundContextType | undefined>(undefined);
 
-const STORAGE_KEYS = {
-  SETTINGS: 'acmf_settings_v2',
-  FLATS: 'acmf_flats_v2',
-  DEPOSITS: 'acmf_deposits_v2',
-  EXPENSES: 'acmf_expenses_v2',
-  RECEIPTS: 'acmf_receipts_v2',
-  ROLE: 'acmf_role_v2',
-  SELECTED_FLAT: 'acmf_selected_flat_v2',
-  HISTORICAL_ARCHIVES: 'acmf_historical_v2',
-  ACTIVE_YEAR: 'acmf_active_year_v2',
-};
-
 export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [settings, setSettings] = useState<FundSettings>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    return saved ? JSON.parse(saved) : INITIAL_SETTINGS;
+  const [settings, setSettings] = useState<FundSettings>(INITIAL_SETTINGS);
+  const [flats, setFlats] = useState<FlatUnit[]>(INITIAL_FLATS);
+  const [deposits, setDeposits] = useState<Deposit[]>(INITIAL_DEPOSITS);
+  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
+  const [receipts, setReceipts] = useState<Receipt[]>(INITIAL_RECEIPTS);
+  const [historicalArchives, setHistoricalArchives] = useState<Record<string, FiscalYearArchive>>(INITIAL_HISTORICAL_ARCHIVES);
+  const [activeFiscalYear, setActiveFiscalYear] = useState<string>('2026');
+  const [selectedFlatId, setSelectedFlatId] = useState<string>('AB1');
+  const [isLoading, setIsLoading] = useState(true);
+  const [usersList, setUsersList] = useState<UserAccount[]>([]);
+
+  // Current User authentication - opens in unauthenticated state unless logged in
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
+    try {
+      const stored = localStorage.getItem('apartment_fund_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.id && parsed.username && parsed.username !== 'guest') {
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return null; // Require login before opening app
   });
 
-  const [flats, setFlats] = useState<FlatUnit[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.FLATS);
-    return saved ? JSON.parse(saved) : INITIAL_FLATS;
-  });
+  const role: 'admin' | 'owner' = currentUser?.role === 'admin' ? 'admin' : 'owner';
 
-  const [deposits, setDeposits] = useState<Deposit[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.DEPOSITS);
-    return saved ? JSON.parse(saved) : INITIAL_DEPOSITS;
-  });
-
-  const [expenses, setExpenses] = useState<Expense[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.EXPENSES);
-    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
-  });
-
-  const [receipts, setReceipts] = useState<Receipt[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.RECEIPTS);
-    return saved ? JSON.parse(saved) : INITIAL_RECEIPTS;
-  });
-
-  const [historicalArchives, setHistoricalArchives] = useState<Record<string, FiscalYearArchive>>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.HISTORICAL_ARCHIVES);
-    return saved ? JSON.parse(saved) : INITIAL_HISTORICAL_ARCHIVES;
-  });
-
-  const [activeFiscalYear, setActiveFiscalYearState] = useState<string>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_YEAR);
-    return saved || '2025-2026';
-  });
-
-  const [role, setRoleState] = useState<'admin' | 'owner'>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.ROLE);
-    return (saved as 'admin' | 'owner') || 'admin';
-  });
-
-  const [selectedFlatId, setSelectedFlatIdState] = useState<string>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_FLAT);
-    return saved || 'AB1';
-  });
-
-  // Sync to localStorage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
-  }, [settings]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.FLATS, JSON.stringify(flats));
-  }, [flats]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DEPOSITS, JSON.stringify(deposits));
-  }, [deposits]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
-  }, [expenses]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RECEIPTS, JSON.stringify(receipts));
-  }, [receipts]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.HISTORICAL_ARCHIVES, JSON.stringify(historicalArchives));
-  }, [historicalArchives]);
-
-  const setRole = (newRole: 'admin' | 'owner') => {
-    setRoleState(newRole);
-    localStorage.setItem(STORAGE_KEYS.ROLE, newRole);
+  // Load backend data
+  const reloadFundData = async () => {
+    try {
+      const res = await fetch('/api/fund-data');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.settings) setSettings(data.settings);
+        if (data.flats && data.flats.length > 0) setFlats(data.flats);
+        if (data.deposits) setDeposits(data.deposits);
+        if (data.expenses) setExpenses(data.expenses);
+        if (data.receipts) setReceipts(data.receipts);
+        if (data.historicalArchives) setHistoricalArchives(data.historicalArchives);
+      }
+    } catch (err) {
+      console.warn('Backend API query error, using state:', err);
+    }
   };
 
-  const setSelectedFlatId = (id: string) => {
-    setSelectedFlatIdState(id);
-    localStorage.setItem(STORAGE_KEYS.SELECTED_FLAT, id);
+  useEffect(() => {
+    async function init() {
+      setIsLoading(true);
+      await reloadFundData();
+      setIsLoading(false);
+    }
+    init();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/auth/users');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.users) setUsersList(data.users);
+      }
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    }
   };
 
-  const setActiveFiscalYear = (year: string) => {
-    setActiveFiscalYearState(year);
-    localStorage.setItem(STORAGE_KEYS.ACTIVE_YEAR, year);
+  useEffect(() => {
+    if (role === 'admin') {
+      fetchUsers();
+    }
+  }, [role]);
+
+  const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.user) {
+        setCurrentUser(data.user);
+        try {
+          localStorage.setItem('apartment_fund_user', JSON.stringify(data.user));
+        } catch {
+          // ignore
+        }
+        if (data.user.flatId) {
+          setSelectedFlatId(data.user.flatId);
+        }
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || 'Invalid credentials' };
+      }
+    } catch (err: any) {
+      console.error('Login error:', err);
+      return { success: false, error: err.message || 'Login failed' };
+    }
   };
 
-  // Available fiscal years list
+  const logout = () => {
+    setCurrentUser(null);
+    try {
+      localStorage.removeItem('apartment_fund_user');
+    } catch {
+      // ignore
+    }
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) return { success: false, error: 'No user signed in' };
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          currentPassword,
+          newPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return { success: false, error: data.error || 'Failed to update password' };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error updating password' };
+    }
+  };
+
+  const updateMyFlatInfo = async (flatId: string, data: Partial<FlatUnit>): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`/api/flats/${flatId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        return { success: false, error: result.error || 'Failed to update flat details' };
+      }
+      // Update in state
+      setFlats((prev) =>
+        prev.map((f) => (f.id === flatId ? { ...f, ...data } : f))
+      );
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error updating flat' };
+    }
+  };
+
+  const updateUserAccount = async (id: string, data: any) => {
+    try {
+      const res = await fetch(`/api/auth/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchUsers();
+      }
+    } catch (err) {
+      console.error('Failed to update user account:', err);
+    }
+  };
+
+  const createUserAccount = async (data: any) => {
+    try {
+      const res = await fetch('/api/auth/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchUsers();
+      }
+    } catch (err) {
+      console.error('Failed to create user account:', err);
+    }
+  };
+
+  const deleteUserAccount = async (id: string) => {
+    try {
+      const res = await fetch(`/api/auth/users/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchUsers();
+      }
+    } catch (err) {
+      console.error('Failed to delete user account:', err);
+    }
+  };
+
   const availableYears = useMemo(() => {
     const years = new Set<string>();
-    years.add('2025-2026');
+    years.add('2026');
+    years.add('2025');
+    years.add('2024');
+    years.add('2023');
+    deposits.forEach((d) => {
+      if (d.fiscalYear) years.add(d.fiscalYear);
+    });
+    expenses.forEach((e) => {
+      if (e.fiscalYear) years.add(e.fiscalYear);
+    });
     Object.keys(historicalArchives).forEach((y) => years.add(y));
     return Array.from(years).sort().reverse();
-  }, [historicalArchives]);
+  }, [historicalArchives, deposits, expenses]);
 
-  // Summaries per flat
   const flatSummaries = useMemo<FlatBalanceSummary[]>(() => {
     return flats.map((flat) => {
       const flatDeposits = deposits.filter((d) => d.flatId === flat.id);
@@ -221,7 +335,6 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [flats, deposits, expenses]);
 
-  // Overall financial stats
   const financialStats = useMemo(() => {
     const totalDeposits = deposits.reduce((sum, d) => sum + (d.amount || 0), 0);
     const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
@@ -254,39 +367,71 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [settings.openingBalance, deposits, expenses, flats, flatSummaries]);
 
-  // Deposit Actions
-  const addDeposit = (depositData: Omit<Deposit, 'id' | 'createdAt'>) => {
-    const newDeposit: Deposit = {
+  // Data modification operations with full PostgreSQL persistence
+  const addDeposit = async (depositData: Omit<Deposit, 'id' | 'createdAt'>) => {
+    const tempId = `dep-${Date.now()}`;
+    const newDep: Deposit = {
       ...depositData,
-      id: `dep-${Date.now()}`,
+      id: tempId,
+      fiscalYear: depositData.fiscalYear || activeFiscalYear || '2026',
       createdAt: new Date().toISOString(),
     };
-    setDeposits((prev) => [newDeposit, ...prev]);
+    setDeposits((prev) => [newDep, ...prev]);
+
+    try {
+      const res = await fetch('/api/deposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDep),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.id) {
+          setDeposits((prev) => prev.map((d) => (d.id === tempId ? { ...d, id: json.id } : d)));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to save deposit to backend:', err);
+    }
   };
 
-  const updateDeposit = (updated: Deposit) => {
+  const updateDeposit = async (updated: Deposit) => {
     setDeposits((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+    try {
+      await fetch(`/api/deposits/${updated.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.error('Failed to update deposit in backend:', err);
+    }
   };
 
-  const deleteDeposit = (id: string) => {
+  const deleteDeposit = async (id: string) => {
     setDeposits((prev) => prev.filter((d) => d.id !== id));
+    try {
+      await fetch(`/api/deposits/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Failed to delete deposit from backend:', err);
+    }
   };
 
-  // Expense Actions
-  const addExpense = (
+  const addExpense = async (
     expenseData: Omit<Expense, 'id' | 'createdAt'>,
     receiptData?: { fileName: string; fileUrl: string }
   ) => {
     const expId = `exp-${Date.now()}`;
-    const newExpense: Expense = {
+    const newExp: Expense = {
       ...expenseData,
       id: expId,
+      fiscalYear: expenseData.fiscalYear || activeFiscalYear || '2026',
       createdAt: new Date().toISOString(),
       receiptFileName: receiptData?.fileName || expenseData.receiptFileName,
       receiptUrl: receiptData?.fileUrl || expenseData.receiptUrl,
       receiptVerified: true,
     };
-    setExpenses((prev) => [newExpense, ...prev]);
+    setExpenses((prev) => [newExp, ...prev]);
 
     const receiptUrl =
       receiptData?.fileUrl ||
@@ -316,15 +461,42 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
       notes: expenseData.notes,
     };
     setReceipts((prev) => [newReceipt, ...prev]);
+
+    try {
+      await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expense: newExp,
+          receipt: receiptData,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save expense to backend:', err);
+    }
   };
 
-  const updateExpense = (updated: Expense) => {
+  const updateExpense = async (updated: Expense) => {
     setExpenses((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    try {
+      await fetch(`/api/expenses/${updated.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.error('Failed to update expense in backend:', err);
+    }
   };
 
-  const deleteExpense = (id: string) => {
+  const deleteExpense = async (id: string) => {
     setExpenses((prev) => prev.filter((e) => e.id !== id));
     setReceipts((prev) => prev.filter((r) => r.expenseId !== id));
+    try {
+      await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Failed to delete expense from backend:', err);
+    }
   };
 
   const addReceipt = (receiptData: Omit<Receipt, 'id' | 'uploadedAt'>) => {
@@ -344,16 +516,61 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setReceipts((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
   };
 
-  const updateSettings = (newSettings: Partial<FundSettings>) => {
+  const updateSettings = async (newSettings: Partial<FundSettings>) => {
     setSettings((prev) => ({ ...prev, ...newSettings }));
+    try {
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSettings),
+      });
+    } catch (err) {
+      console.error('Failed to update settings in backend:', err);
+    }
   };
 
-  const updateFlat = (updated: FlatUnit) => {
+  const updateFlat = async (updated: FlatUnit) => {
     setFlats((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
+    try {
+      await fetch(`/api/flats/${updated.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.error('Failed to update flat in backend:', err);
+    }
   };
 
-  // Previous Years / Historical Archive Actions (Admin Only)
-  const importPreviousYearData = (
+  const updateHistoricalArchive = async (year: string, data: { openingBalance?: number; notes?: string }) => {
+    setHistoricalArchives((prev) => {
+      const existing = prev[year];
+      if (!existing) return prev;
+      const newOpening = data.openingBalance !== undefined ? data.openingBalance : existing.openingBalance;
+      const newClosing = newOpening + existing.totalDeposits - existing.totalExpenses;
+      return {
+        ...prev,
+        [year]: {
+          ...existing,
+          openingBalance: newOpening,
+          closingBalance: newClosing,
+          notes: data.notes !== undefined ? data.notes : existing.notes,
+        },
+      };
+    });
+
+    try {
+      await fetch(`/api/archives/${year}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch (err) {
+      console.error('Failed to update archive in backend:', err);
+    }
+  };
+
+  const importPreviousYearData = async (
     fiscalYear: string,
     openingBalance: number,
     depositsList: Deposit[],
@@ -374,25 +591,55 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
       expenses: expensesList,
       notes: notes || `Historical archive imported for Fiscal Year ${fiscalYear}`,
       importedAt: new Date().toISOString(),
-      importedBy: settings.adminName,
+      importedBy: currentUser?.displayName || 'Admin',
     };
 
     setHistoricalArchives((prev) => ({
       ...prev,
       [fiscalYear]: archive,
     }));
+
+    // If importing for current active year, also append to active transactions
+    if (fiscalYear === settings.fiscalYear || fiscalYear === activeFiscalYear) {
+      setDeposits((prev) => [...depositsList, ...prev]);
+      setExpenses((prev) => [...expensesList, ...prev]);
+      setSettings((prev) => ({ ...prev, openingBalance }));
+    }
+
+    try {
+      await fetch('/api/import-year', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fiscalYear,
+          openingBalance,
+          deposits: depositsList,
+          expenses: expensesList,
+          notes,
+        }),
+      });
+      await reloadFundData();
+    } catch (err) {
+      console.error('Failed to persist year import to PostgreSQL backend:', err);
+    }
   };
 
-  const deleteHistoricalYear = (year: string) => {
+  const deleteHistoricalYear = async (year: string) => {
     setHistoricalArchives((prev) => {
       const copy = { ...prev };
       delete copy[year];
       return copy;
     });
+    setDeposits((prev) => prev.filter((d) => d.fiscalYear !== year));
+    setExpenses((prev) => prev.filter((e) => e.fiscalYear !== year));
+    try {
+      await fetch(`/api/archives/${year}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Failed to delete year archive in backend:', err);
+    }
   };
 
-  // Smart CSV parser for historical data
-  const parseAndImportCsv = (
+  const parseAndImportCsv = async (
     csvContent: string,
     targetYear: string,
     openingBal: number,
@@ -406,7 +653,6 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const parsedDeposits: Deposit[] = [];
       const parsedExpenses: Expense[] = [];
-
       let parsingSection: 'none' | 'deposits' | 'expenses' = 'none';
 
       for (let i = 0; i < rawLines.length; i++) {
@@ -423,15 +669,13 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
           continue;
         }
 
-        // CSV line tokenizer handling quotes
         const tokens: string[] = [];
         let inQuotes = false;
         let token = '';
         for (let c = 0; c < line.length; c++) {
           const char = line[c];
-          if (char === '"') {
-            inQuotes = !inQuotes;
-          } else if (char === ',' && !inQuotes) {
+          if (char === '"') inQuotes = !inQuotes;
+          else if (char === ',' && !inQuotes) {
             tokens.push(token.trim().replace(/^"|"$/g, ''));
             token = '';
           } else {
@@ -440,7 +684,6 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         tokens.push(token.trim().replace(/^"|"$/g, ''));
 
-        // Skip headers or totals
         if (
           tokens[0]?.toLowerCase().startsWith('date') ||
           tokens[0]?.toLowerCase().startsWith('total') ||
@@ -450,8 +693,7 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (parsingSection === 'deposits') {
-          // Expect: Date, Description, Flat, Amount
-          const date = tokens[0] || new Date().toISOString().slice(0, 10);
+          const date = tokens[0] || `${targetYear}-11-01`;
           const description = tokens[1] || 'Deposit Received';
           const flatId = tokens[2]?.trim().toUpperCase() || 'AB1';
           const rawAmt = tokens[3]?.replace(/,/g, '') || '0';
@@ -460,6 +702,7 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (!isNaN(amount) && amount > 0) {
             parsedDeposits.push({
               id: `dep-imp-${Date.now()}-${parsedDeposits.length}`,
+              fiscalYear: targetYear,
               date,
               description,
               flatId,
@@ -474,20 +717,16 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
           }
         } else if (parsingSection === 'expenses') {
-          // Expect: Date, Description, [optional], Shares, Amount, Per Flat, AB1, A2, B2, A3, B3, A4, B4, AB5
-          const date = tokens[0] || new Date().toISOString().slice(0, 10);
+          const date = tokens[0] || `${targetYear}-06-01`;
           const description = tokens[1] || 'Maintenance Expense';
-          
+
           let sharesIdx = 2;
-          if (tokens[2] === '' || isNaN(parseInt(tokens[2]))) {
-            sharesIdx = 3;
-          }
+          if (tokens[2] === '' || isNaN(parseInt(tokens[2]))) sharesIdx = 3;
           const shares = parseInt(tokens[sharesIdx]) || 10;
           const rawAmt = tokens[sharesIdx + 1]?.replace(/,/g, '') || '0';
           const amount = parseFloat(rawAmt);
           const perFlatBase = parseFloat(tokens[sharesIdx + 2]?.replace(/,/g, '') || '0') || Math.round(amount / shares);
 
-          // Extract unit allocations if available
           const allocations: Record<string, number> = {};
           const flatIds = ['AB1', 'A2', 'B2', 'A3', 'B3', 'A4', 'B4', 'AB5'];
           const startFlatCol = sharesIdx + 3;
@@ -497,14 +736,13 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!isNaN(allocVal)) {
               allocations[fId] = allocVal;
             } else {
-              // Default 10 share split: AB1=2, AB5=2, rest=1
               const weight = fId === 'AB1' || fId === 'AB5' ? 2 : 1;
               allocations[fId] = Math.round((amount / 10) * weight);
             }
           });
 
           if (!isNaN(amount) && amount > 0) {
-            let cat: ExpenseCategory = 'adhoc';
+            let cat: any = 'adhoc';
             const descLower = description.toLowerCase();
             if (descLower.includes('paint')) cat = 'painting_renovation';
             else if (descLower.includes('generator')) cat = 'generator';
@@ -517,6 +755,7 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             parsedExpenses.push({
               id: `exp-imp-${Date.now()}-${parsedExpenses.length}`,
+              fiscalYear: targetYear,
               date,
               description,
               category: cat,
@@ -541,7 +780,7 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      importPreviousYearData(
+      await importPreviousYearData(
         targetYear,
         openingBal,
         parsedDeposits,
@@ -566,21 +805,18 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const resetToDefaultData = () => {
-    setSettings(INITIAL_SETTINGS);
+  const resetToDefaultData = async () => {
+    setSettings({ ...INITIAL_SETTINGS, openingBalance: 0.00 });
     setFlats(INITIAL_FLATS);
-    setDeposits(INITIAL_DEPOSITS);
-    setExpenses(INITIAL_EXPENSES);
-    setReceipts(INITIAL_RECEIPTS);
-    setHistoricalArchives(INITIAL_HISTORICAL_ARCHIVES);
-    setActiveFiscalYearState('2025-2026');
-    localStorage.removeItem(STORAGE_KEYS.SETTINGS);
-    localStorage.removeItem(STORAGE_KEYS.FLATS);
-    localStorage.removeItem(STORAGE_KEYS.DEPOSITS);
-    localStorage.removeItem(STORAGE_KEYS.EXPENSES);
-    localStorage.removeItem(STORAGE_KEYS.RECEIPTS);
-    localStorage.removeItem(STORAGE_KEYS.HISTORICAL_ARCHIVES);
-    localStorage.removeItem(STORAGE_KEYS.ACTIVE_YEAR);
+    setDeposits([]);
+    setExpenses([]);
+    setReceipts([]);
+    setHistoricalArchives({});
+    try {
+      await fetch('/api/reset-blank', { method: 'POST' });
+    } catch (err) {
+      console.error('Failed to reset PostgreSQL database:', err);
+    }
   };
 
   const exportCsvData = () => {
@@ -642,7 +878,8 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const exportJsonBackup = () => {
     const backup = {
       exportedAt: new Date().toISOString(),
-      version: '2.0',
+      version: '3.0',
+      database: 'PostgreSQL',
       settings,
       flats,
       deposits,
@@ -654,7 +891,7 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `Apartment_Fund_Full_5Year_Backup_${new Date().toISOString().slice(0, 10)}.json`);
+    link.setAttribute('download', `Apartment_Fund_Postgres_Backup_${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -684,19 +921,27 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deposits,
         expenses,
         receipts,
+        historicalArchives,
         role,
-        setRole,
+        currentUser,
+        login,
+        logout,
+        changePassword,
+        updateMyFlatInfo,
+        usersList,
+        fetchUsers,
+        updateUserAccount,
+        createUserAccount,
+        deleteUserAccount,
         selectedFlatId,
         setSelectedFlatId,
         flatSummaries,
         financialStats,
-        historicalArchives,
+        isLoading,
         availableYears,
         activeFiscalYear,
         setActiveFiscalYear,
-        importPreviousYearData,
-        parseAndImportCsv,
-        deleteHistoricalYear,
+        reloadFundData,
         addDeposit,
         updateDeposit,
         deleteDeposit,
@@ -708,6 +953,10 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateReceipt,
         updateSettings,
         updateFlat,
+        updateHistoricalArchive,
+        importPreviousYearData,
+        parseAndImportCsv,
+        deleteHistoricalYear,
         resetToDefaultData,
         exportCsvData,
         exportJsonBackup,

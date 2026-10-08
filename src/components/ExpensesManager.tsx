@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useFund } from '../context/FundContext';
-import { Expense, ExpenseCategory, BillingFrequency } from '../types';
+import { Expense, ExpenseCategory, BillingFrequency } from '../types/index.ts';
 import { 
   ArrowUpRight, 
   Search, 
@@ -34,11 +34,13 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [frequencyFilter, setFrequencyFilter] = useState('ALL');
+  const [selectedYearFilter, setSelectedYearFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   // Form states
   const [formDate, setFormDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formFiscalYear, setFormFiscalYear] = useState('2026');
   const [formDescription, setFormDescription] = useState('');
   const [formCategory, setFormCategory] = useState<ExpenseCategory>('painting_renovation');
   const [formFrequency, setFormFrequency] = useState<BillingFrequency>('adhoc');
@@ -63,11 +65,12 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
   const filteredExpenses = expenses.filter((exp) => {
     const matchesCat = categoryFilter === 'ALL' || exp.category === categoryFilter;
     const matchesFreq = frequencyFilter === 'ALL' || exp.billingFrequency === frequencyFilter;
+    const matchesYear = selectedYearFilter === 'ALL' || exp.fiscalYear === selectedYearFilter;
     const matchesSearch =
       exp.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (exp.vendorName && exp.vendorName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (exp.notes && exp.notes.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesCat && matchesFreq && matchesSearch;
+    return matchesCat && matchesFreq && matchesYear && matchesSearch;
   });
 
   const totalFilteredAmount = filteredExpenses.reduce((acc, curr) => acc + curr.amount, 0);
@@ -75,6 +78,7 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
   const handleOpenAddModal = () => {
     setEditingExpense(null);
     setFormDate(new Date().toISOString().slice(0, 10));
+    setFormFiscalYear('2026');
     setFormDescription('');
     setFormCategory('painting_renovation');
     setFormFrequency('adhoc');
@@ -99,6 +103,7 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
   const handleOpenEditModal = (exp: Expense) => {
     setEditingExpense(exp);
     setFormDate(exp.date);
+    setFormFiscalYear(exp.fiscalYear || '2026');
     setFormDescription(exp.description);
     setFormCategory(exp.category);
     setFormFrequency(exp.billingFrequency);
@@ -159,7 +164,7 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const totalAmount = parseFloat(formAmount);
     if (isNaN(totalAmount) || totalAmount <= 0) {
@@ -170,8 +175,9 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
     const { allocations, shares, perFlatBase } = calculateAllocations(totalAmount);
 
     if (editingExpense) {
-      updateExpense({
+      await updateExpense({
         ...editingExpense,
+        fiscalYear: formFiscalYear,
         date: formDate,
         description: formDescription,
         category: formCategory,
@@ -184,8 +190,9 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
         allocations,
       });
     } else {
-      addExpense(
+      await addExpense(
         {
+          fiscalYear: formFiscalYear,
           date: formDate,
           description: formDescription,
           category: formCategory,
@@ -237,9 +244,22 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
 
       {/* Filter Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-neutral-200">
-        {/* Category Filter */}
-        <div className="flex items-center gap-2 overflow-x-auto text-xs scrollbar-none pb-1 md:pb-0">
-          <span className="text-neutral-500 font-medium">Category:</span>
+        {/* Category & Year Filters */}
+        <div className="flex items-center flex-wrap gap-2 text-xs">
+          <span className="text-neutral-500 font-medium">Fiscal Year:</span>
+          <select
+            value={selectedYearFilter}
+            onChange={(e) => setSelectedYearFilter(e.target.value)}
+            className="p-1.5 border border-neutral-200 rounded-md bg-neutral-50 text-neutral-800 text-xs font-mono font-medium focus:outline-none"
+          >
+            <option value="ALL">All Years</option>
+            <option value="2026">FY 2026</option>
+            <option value="2025">FY 2025</option>
+            <option value="2024">FY 2024</option>
+            <option value="2023">FY 2023</option>
+          </select>
+
+          <span className="text-neutral-500 font-medium ml-1">Category:</span>
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
@@ -258,7 +278,7 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
             <option value="electrical">Electrical</option>
           </select>
 
-          <span className="text-neutral-500 font-medium ml-2">Cadence:</span>
+          <span className="text-neutral-500 font-medium ml-1">Cadence:</span>
           <select
             value={frequencyFilter}
             onChange={(e) => setFrequencyFilter(e.target.value)}
@@ -498,7 +518,24 @@ export const ExpensesManager: React.FC<ExpensesManagerProps> = ({ onOpenReceiptV
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                {/* Fiscal Year */}
+                <div>
+                  <label className="block font-medium text-neutral-700 mb-1">
+                    Fiscal Year
+                  </label>
+                  <select
+                    value={formFiscalYear}
+                    onChange={(e) => setFormFiscalYear(e.target.value)}
+                    className="w-full p-2 border border-neutral-300 rounded-md bg-white text-neutral-900 font-mono focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                  >
+                    <option value="2026">2026</option>
+                    <option value="2025">2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
+                  </select>
+                </div>
+
                 {/* Date */}
                 <div>
                   <label className="block font-medium text-neutral-700 mb-1">

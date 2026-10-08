@@ -13,17 +13,20 @@ import {
   CreditCard,
   CheckCircle2,
   AlertTriangle,
-  Download
+  Download,
+  Edit3
 } from 'lucide-react';
 
 interface UnitLedgerViewProps {
   initialFlatId?: string;
   onOpenNewDepositForFlat: (flatId: string) => void;
+  onOpenEditFlat?: () => void;
 }
 
 export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
   initialFlatId,
   onOpenNewDepositForFlat,
+  onOpenEditFlat,
 }) => {
   const { 
     flats, 
@@ -40,9 +43,12 @@ export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
   const currentFlat = flats.find((f) => f.id === activeFlatId) || flats[0];
   const summary = flatSummaries.find((s) => s.flatId === currentFlat.id);
 
+  const [yearFilter, setYearFilter] = useState<string>('ALL');
+
   // Build combined chronological ledger of all debits (expenses) and credits (deposits)
   interface LedgerEntry {
     id: string;
+    fiscalYear?: string;
     date: string;
     description: string;
     type: 'debit' | 'credit';
@@ -56,10 +62,11 @@ export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
 
   // 1. Deposits made by this flat (Credit: increases balance)
   deposits
-    .filter((d) => d.flatId === currentFlat.id)
+    .filter((d) => d.flatId === currentFlat.id && (yearFilter === 'ALL' || d.fiscalYear === yearFilter))
     .forEach((d) => {
       rawEntries.push({
         id: d.id,
+        fiscalYear: d.fiscalYear,
         date: d.date,
         description: d.description,
         type: 'credit',
@@ -71,21 +78,24 @@ export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
     });
 
   // 2. Expenses allocated to this flat (Debit: reduces balance)
-  expenses.forEach((e) => {
-    const allocated = e.allocations?.[currentFlat.id] || 0;
-    if (allocated > 0) {
-      rawEntries.push({
-        id: e.id,
-        date: e.date,
-        description: e.description,
-        type: 'debit',
-        debitAmount: allocated,
-        creditAmount: 0,
-        refNo: e.receiptFileName || 'Voucher',
-        details: `${e.numberOfShares} Share Allocation (${currentFlat.shares} shares billed)`,
-      });
-    }
-  });
+  expenses
+    .filter((e) => yearFilter === 'ALL' || e.fiscalYear === yearFilter)
+    .forEach((e) => {
+      const allocated = e.allocations?.[currentFlat.id] || 0;
+      if (allocated > 0) {
+        rawEntries.push({
+          id: e.id,
+          fiscalYear: e.fiscalYear,
+          date: e.date,
+          description: e.description,
+          type: 'debit',
+          debitAmount: allocated,
+          creditAmount: 0,
+          refNo: e.receiptFileName || 'Voucher',
+          details: `${e.numberOfShares} Share Allocation (${currentFlat.shares} shares billed)`,
+        });
+      }
+    });
 
   // Sort chronologically ascending
   rawEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -162,6 +172,24 @@ export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
             <p className="text-xs text-neutral-500 mt-0.5">
               {settings.buildingName} · {settings.complexAddress}
             </p>
+
+            {/* Fiscal Year Filter Buttons */}
+            <div className="flex items-center gap-1.5 pt-3 no-print">
+              <span className="text-xs text-neutral-500 font-medium">Ledger Year:</span>
+              {['ALL', '2026', '2025', '2024', '2023'].map((yr) => (
+                <button
+                  key={yr}
+                  onClick={() => setYearFilter(yr)}
+                  className={`px-2.5 py-1 rounded text-xs font-mono font-medium transition-colors ${
+                    yearFilter === yr
+                      ? 'bg-neutral-900 text-white shadow-xs'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                  }`}
+                >
+                  {yr === 'ALL' ? 'All Years' : `FY ${yr}`}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 no-print self-start sm:self-auto">
@@ -195,9 +223,20 @@ export const UnitLedgerView: React.FC<UnitLedgerViewProps> = ({
 
           {/* Column 2: Co-Owners Register */}
           <div className="space-y-1 md:col-span-2">
-            <span className="font-semibold text-neutral-500 uppercase tracking-wider text-[10px]">
-              Registered Unit Owners
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-neutral-500 uppercase tracking-wider text-[10px]">
+                Registered Unit Owners &amp; Contacts
+              </span>
+              {onOpenEditFlat && (
+                <button
+                  onClick={onOpenEditFlat}
+                  className="text-[11px] font-medium text-neutral-700 hover:text-neutral-900 underline flex items-center gap-1 no-print"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>Update Unit Details</span>
+                </button>
+              )}
+            </div>
             <div className="space-y-1.5 mt-1">
               {currentFlat.coOwners.map((owner) => (
                 <div key={owner.id} className="flex flex-wrap items-center justify-between text-neutral-800 border-b border-neutral-200/60 pb-1 last:border-none">

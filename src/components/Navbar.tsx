@@ -5,12 +5,11 @@ import {
   ShieldCheck, 
   UserCheck, 
   Download, 
-  RotateCcw, 
   Plus, 
-  FileSpreadsheet,
-  Receipt,
-  Mail,
-  SlidersHorizontal
+  SlidersHorizontal,
+  KeyRound,
+  LogOut,
+  User
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -18,6 +17,7 @@ interface NavbarProps {
   setCurrentTab: (tab: string) => void;
   onOpenNewEntry: () => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -25,14 +25,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   setCurrentTab,
   onOpenNewEntry,
   onOpenSettings,
+  onOpenProfile,
 }) => {
-  const { role, setRole, exportCsvData, resetToDefaultData, settings } = useFund();
-
-  const handleReset = () => {
-    if (window.confirm('Reset all fund records, deposits, expenses, and receipts to the original 2025–2026 audit data?')) {
-      resetToDefaultData();
-    }
-  };
+  const { role, currentUser, logout, exportCsvData } = useFund();
 
   const navLinks = [
     { id: 'overview', label: 'Overview' },
@@ -47,7 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     <header className="sticky top-0 z-40 bg-white border-b border-neutral-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Zone 1: Single text element wordmark */}
+          {/* Zone 1: Wordmark */}
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-md bg-neutral-900 text-white flex items-center justify-center font-bold text-sm">
               <Building2 className="w-5 h-5 text-neutral-100" />
@@ -60,7 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* Zone 2: Navigation Links (single line, clean typography) */}
+          {/* Zone 2: Navigation Links */}
           <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-neutral-600">
             {navLinks.map((link) => {
               const isActive = currentTab === link.id;
@@ -83,8 +78,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             })}
           </nav>
 
-          {/* Zone 3: Actions & Role Switcher */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Zone 3: Actions & User Login Pill */}
+          <div className="flex items-center gap-2 sm:gap-2.5">
             {/* Quick Export CSV */}
             <button
               onClick={exportCsvData}
@@ -92,54 +87,67 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors text-xs font-medium flex items-center gap-1.5"
             >
               <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Export CSV</span>
+              <span className="hidden xl:inline">Export CSV</span>
             </button>
 
             {/* Quick Settings */}
             <button
               onClick={onOpenSettings}
-              title="Fund Settings & Co-owners"
+              title="Fund Settings, Accounts & Users"
               className="p-2 text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-md transition-colors"
             >
               <SlidersHorizontal className="w-4 h-4" />
             </button>
 
-            {/* Role Switcher Pill */}
-            <div className="flex items-center p-0.5 bg-neutral-100 rounded-md border border-neutral-200">
+            {/* User Account / Profile Button */}
+            <div className="flex items-center bg-neutral-100 rounded-lg p-1 border border-neutral-200">
               <button
-                onClick={() => setRole('admin')}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 ${
-                  role === 'admin'
-                    ? 'bg-neutral-900 text-white shadow-xs'
-                    : 'text-neutral-600 hover:text-neutral-900'
-                }`}
+                onClick={onOpenProfile}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded hover:bg-white transition-colors text-neutral-800"
+                title="Account Settings: Update Flat Info & Change Password"
               >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Admin Mode</span>
-                <span className="md:hidden">Admin</span>
+                {role === 'admin' ? (
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                ) : (
+                  <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                )}
+                <span className="font-semibold text-neutral-900 max-w-[130px] truncate hidden sm:inline">
+                  {currentUser?.displayName || 'User'}
+                </span>
+                <span className={`px-1.5 py-0.2 font-mono text-[9px] font-bold rounded ${
+                  role === 'admin' 
+                    ? 'bg-neutral-900 text-white' 
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {role === 'admin' ? 'ADMIN' : (currentUser?.flatId ? `FLAT ${currentUser.flatId}` : 'OWNER')}
+                </span>
               </button>
+
               <button
-                onClick={() => setRole('owner')}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 ${
-                  role === 'owner'
-                    ? 'bg-white text-neutral-900 shadow-xs'
-                    : 'text-neutral-600 hover:text-neutral-900'
-                }`}
+                onClick={logout}
+                title="Sign Out of Portal"
+                className="p-1 text-neutral-400 hover:text-neutral-700 rounded ml-0.5"
               >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Owner View</span>
-                <span className="md:hidden">Owner</span>
+                <LogOut className="w-3.5 h-3.5" />
               </button>
             </div>
 
             {/* Primary Action Button (Admin only) */}
-            {role === 'admin' && (
+            {role === 'admin' ? (
               <button
                 onClick={onOpenNewEntry}
                 className="px-3 py-1.5 bg-neutral-900 text-white rounded-md text-xs font-medium hover:bg-neutral-800 transition-colors flex items-center gap-1.5 whitespace-nowrap shadow-xs"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ Post Entry</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenProfile}
+                className="px-2.5 py-1.5 bg-white border border-neutral-300 text-neutral-800 rounded-md text-xs font-medium hover:bg-neutral-50 transition-colors flex items-center gap-1 shadow-xs"
+              >
+                <User className="w-3.5 h-3.5 text-neutral-600" />
+                <span>My Flat Info</span>
               </button>
             )}
           </div>

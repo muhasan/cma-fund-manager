@@ -105,6 +105,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       </div>
 
+      {/* Database Guidance Banner */}
+      {deposits.length === 0 && expenses.length === 0 && (
+        <div className="p-4 bg-white border border-neutral-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="space-y-0.5">
+            <span className="font-bold text-neutral-900 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              Active Database Connected
+            </span>
+            <p className="text-neutral-500">
+              Ready to record transactions or manage multi-year financial statements for 2023, 2024, 2025, and 2026.
+            </p>
+          </div>
+          <button
+            onClick={onOpenPreviousYears}
+            className="px-3.5 py-1.5 bg-neutral-900 text-white rounded font-medium hover:bg-neutral-800 self-start sm:self-auto flex items-center gap-1 shadow-xs"
+          >
+            Review Historical Records →
+          </button>
+        </div>
+      )}
+
       {/* Top Financial Stat Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Card 1: Opening Balance */}

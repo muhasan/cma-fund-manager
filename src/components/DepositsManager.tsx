@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useFund } from '../context/FundContext';
-import { Deposit, PaymentMethod } from '../types';
+import { Deposit, PaymentMethod } from '../types/index.ts';
 import { 
   ArrowDownLeft, 
   Search, 
@@ -28,6 +28,7 @@ export const DepositsManager: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFlatFilter, setSelectedFlatFilter] = useState('ALL');
+  const [selectedYearFilter, setSelectedYearFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDeposit, setEditingDeposit] = useState<Deposit | null>(null);
   const [viewingReceipt, setViewingReceipt] = useState<Deposit | null>(null);
@@ -35,6 +36,7 @@ export const DepositsManager: React.FC = () => {
   // Form state
   const [formFlatId, setFormFlatId] = useState('AB1');
   const [formDate, setFormDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formFiscalYear, setFormFiscalYear] = useState('2026');
   const [formAmount, setFormAmount] = useState('');
   const [formMethod, setFormMethod] = useState<PaymentMethod>('DBBL');
   const [formPaidBy, setFormPaidBy] = useState('');
@@ -46,12 +48,13 @@ export const DepositsManager: React.FC = () => {
 
   const filteredDeposits = deposits.filter((dep) => {
     const matchesFlat = selectedFlatFilter === 'ALL' || dep.flatId === selectedFlatFilter;
+    const matchesYear = selectedYearFilter === 'ALL' || dep.fiscalYear === selectedYearFilter;
     const matchesSearch =
       dep.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       dep.flatId.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (dep.referenceNo && dep.referenceNo.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (dep.paidBy && dep.paidBy.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesFlat && matchesSearch;
+    return matchesFlat && matchesYear && matchesSearch;
   });
 
   const totalFilteredAmount = filteredDeposits.reduce((acc, curr) => acc + curr.amount, 0);
@@ -60,6 +63,7 @@ export const DepositsManager: React.FC = () => {
     setEditingDeposit(null);
     setFormFlatId('AB1');
     setFormDate(new Date().toISOString().slice(0, 10));
+    setFormFiscalYear('2026');
     setFormAmount('');
     setFormMethod('DBBL');
     setFormPaidBy('');
@@ -73,6 +77,7 @@ export const DepositsManager: React.FC = () => {
     setEditingDeposit(dep);
     setFormFlatId(dep.flatId);
     setFormDate(dep.date);
+    setFormFiscalYear(dep.fiscalYear || '2026');
     setFormAmount(dep.amount.toString());
     setFormMethod(dep.paymentMethod);
     setFormPaidBy(dep.paidBy || '');
@@ -93,7 +98,7 @@ export const DepositsManager: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amountNum = parseFloat(formAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -102,10 +107,11 @@ export const DepositsManager: React.FC = () => {
     }
 
     if (editingDeposit) {
-      updateDeposit({
+      await updateDeposit({
         ...editingDeposit,
         flatId: formFlatId,
         date: formDate,
+        fiscalYear: formFiscalYear,
         amount: amountNum,
         paymentMethod: formMethod,
         paidBy: formPaidBy,
@@ -114,9 +120,10 @@ export const DepositsManager: React.FC = () => {
         notes: formNotes,
       });
     } else {
-      addDeposit({
+      await addDeposit({
         flatId: formFlatId,
         date: formDate,
+        fiscalYear: formFiscalYear,
         amount: amountNum,
         paymentMethod: formMethod,
         paidBy: formPaidBy,
@@ -162,11 +169,28 @@ export const DepositsManager: React.FC = () => {
 
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-neutral-200">
-        {/* Flat Selector Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none text-xs">
+        {/* Flat Selector Tabs & Year */}
+        <div className="flex items-center flex-wrap gap-1 text-xs">
+          <div className="flex items-center gap-1 bg-neutral-100 p-0.5 rounded-md border border-neutral-200 mr-2">
+            <span className="text-[10px] font-bold text-neutral-500 uppercase px-1.5">FY:</span>
+            {['ALL', '2026', '2025', '2024', '2023'].map((yr) => (
+              <button
+                key={yr}
+                onClick={() => setSelectedYearFilter(yr)}
+                className={`px-2 py-1 rounded text-xs font-mono font-medium transition-colors ${
+                  selectedYearFilter === yr
+                    ? 'bg-neutral-900 text-white shadow-xs'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                {yr}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={() => setSelectedFlatFilter('ALL')}
-            className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
+            className={`px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
               selectedFlatFilter === 'ALL'
                 ? 'bg-neutral-900 text-white'
                 : 'text-neutral-600 hover:bg-neutral-100'
@@ -178,7 +202,7 @@ export const DepositsManager: React.FC = () => {
             <button
               key={flat.id}
               onClick={() => setSelectedFlatFilter(flat.id)}
-              className={`px-3 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
+              className={`px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${
                 selectedFlatFilter === flat.id
                   ? 'bg-neutral-900 text-white'
                   : 'text-neutral-600 hover:bg-neutral-100'
@@ -345,7 +369,7 @@ export const DepositsManager: React.FC = () => {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {/* Flat selection */}
                 <div>
                   <label className="block font-medium text-neutral-700 mb-1">
@@ -358,9 +382,26 @@ export const DepositsManager: React.FC = () => {
                   >
                     {flats.map((flat) => (
                       <option key={flat.id} value={flat.id}>
-                        {flat.id} — {flat.name} ({flat.shares} {flat.shares > 1 ? 'shares' : 'share'})
+                        {flat.id} — {flat.name}
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                {/* Fiscal Year */}
+                <div>
+                  <label className="block font-medium text-neutral-700 mb-1">
+                    Fiscal Year
+                  </label>
+                  <select
+                    value={formFiscalYear}
+                    onChange={(e) => setFormFiscalYear(e.target.value)}
+                    className="w-full p-2 border border-neutral-300 rounded-md bg-white text-neutral-900 font-mono focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                  >
+                    <option value="2026">2026</option>
+                    <option value="2025">2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
                   </select>
                 </div>
 
@@ -375,8 +416,7 @@ export const DepositsManager: React.FC = () => {
                     value={formDate}
                     onChange={(e) => setFormDate(e.target.value)}
                     className="w-full p-2 border border-neutral-300 rounded-md text-neutral-900 focus:outline-none focus:ring-1 focus:ring-neutral-900"
-                  >
-                  </input>
+                  />
                 </div>
               </div>
 

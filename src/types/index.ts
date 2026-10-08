@@ -26,6 +26,7 @@ export type PaymentMethod = 'DBBL' | 'bKash' | 'Cash' | 'Bank Transfer' | 'Nagad
 
 export interface Deposit {
   id: string;
+  fiscalYear?: string; // e.g. "2023", "2024", "2025", "2026"
   date: string; // ISO format YYYY-MM-DD
   description: string;
   flatId: string;
@@ -56,6 +57,7 @@ export type BillingFrequency = 'yearly' | 'monthly' | 'adhoc' | 'daily';
 
 export interface Expense {
   id: string;
+  fiscalYear?: string; // e.g. "2023", "2024", "2025", "2026"
   date: string; // ISO format YYYY-MM-DD
   description: string;
   category: ExpenseCategory;
@@ -70,6 +72,16 @@ export interface Expense {
   receiptVerified: boolean;
   notes?: string;
   createdAt: string;
+}
+
+export interface UserAccount {
+  id: string;
+  username: string;
+  role: 'admin' | 'owner';
+  flatId?: string;
+  displayName: string;
+  email?: string;
+  createdAt?: string;
 }
 
 export interface Receipt {

@@ -9,6 +9,8 @@ import { ReceiptsPortal } from './components/ReceiptsPortal';
 import { PreviousYearsManager } from './components/PreviousYearsManager';
 import { AdminSettingsModal } from './components/AdminSettingsModal';
 import { MonthlyReportModal } from './components/MonthlyReportModal';
+import { AccountProfileModal } from './components/AccountProfileModal';
+import { LoginPage } from './components/LoginPage';
 import { 
   Building2, 
   FileSpreadsheet, 
@@ -18,16 +20,36 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   UserCheck,
-  Calendar
+  Calendar,
+  Building
 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { role, setRole, selectedFlatId, setSelectedFlatId, settings } = useFund();
+  const { currentUser, role, selectedFlatId, setSelectedFlatId, settings, isLoading } = useFund();
 
   const [currentTab, setCurrentTab] = useState<string>('overview');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMonthlyReportOpen, setIsMonthlyReportOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState<'flat' | 'password'>('flat');
   const [inspectedExpenseId, setInspectedExpenseId] = useState<string | null>(null);
+
+  // If initial fund data is loading
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-100 flex items-center justify-center font-sans">
+        <div className="text-center space-y-3">
+          <div className="w-9 h-9 border-3 border-neutral-900 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-neutral-600 font-medium">Connecting to Fund Management System...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // If user is not authenticated, display full LoginPage
+  if (!currentUser) {
+    return <LoginPage />;
+  }
 
   const handleSelectFlatFromOverview = (flatId: string) => {
     setSelectedFlatId(flatId);
@@ -59,6 +81,10 @@ const MainAppContent: React.FC = () => {
         setCurrentTab={setCurrentTab}
         onOpenNewEntry={() => setCurrentTab('expenses')}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenProfile={() => {
+          setProfileInitialTab('flat');
+          setIsProfileModalOpen(true);
+        }}
       />
 
       {/* Role Banner Notification (if in Owner View) */}
@@ -68,14 +94,17 @@ const MainAppContent: React.FC = () => {
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-emerald-400" />
               <span>
-                <strong>Owner Transparency Mode:</strong> You are browsing building financials, statements, and receipts in read-only mode.
+                <strong>Owner Transparency Mode:</strong> Signed in as {currentUser?.displayName} (Flat {currentUser?.flatId || 'Unit'}). Financial records are read-only.
               </span>
             </div>
             <button
-              onClick={() => setRole('admin')}
+              onClick={() => {
+                setProfileInitialTab('flat');
+                setIsProfileModalOpen(true);
+              }}
               className="underline font-semibold hover:text-white"
             >
-              Switch to Admin Dashboard →
+              Update Flat Info &amp; Password →
             </button>
           </div>
         </div>
@@ -116,12 +145,24 @@ const MainAppContent: React.FC = () => {
                   Previous Years &amp; History
                 </button>
                 <button
-                  onClick={() => setIsSettingsOpen(true)}
+                  onClick={() => {
+                    setProfileInitialTab('flat');
+                    setIsProfileModalOpen(true);
+                  }}
                   className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded font-medium transition-colors flex items-center gap-1.5"
                 >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  Complex &amp; Account Settings
+                  <Building className="w-3.5 h-3.5" />
+                  My Flat Info &amp; Password
                 </button>
+                {role === 'admin' && (
+                  <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded font-medium transition-colors flex items-center gap-1.5"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    Complex &amp; Account Settings
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -139,6 +180,10 @@ const MainAppContent: React.FC = () => {
             onOpenNewDepositForFlat={(fId) => {
               setSelectedFlatId(fId);
               setCurrentTab('deposits');
+            }}
+            onOpenEditFlat={() => {
+              setProfileInitialTab('flat');
+              setIsProfileModalOpen(true);
             }}
           />
         )}
@@ -196,6 +241,13 @@ const MainAppContent: React.FC = () => {
       <MonthlyReportModal
         isOpen={isMonthlyReportOpen}
         onClose={() => setIsMonthlyReportOpen(false)}
+      />
+
+      {/* Account Profile, Flat Information & Password Modal */}
+      <AccountProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        initialTab={profileInitialTab}
       />
     </div>
   );
